@@ -1,0 +1,100 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+    background: #000;
+}
+
+#nameScreen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #111;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+}
+
+#nameScreen input {
+    padding: 10px;
+    font-size: 18px;
+    margin: 10px;
+    border: 2px solid #fff;
+    background: #333;
+    color: white;
+}
+
+#nameScreen button {
+    padding: 10px 20px;
+    font-size: 18px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+#ui {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 50;
+}
+
+#healthBar {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: #333;
+    padding: 5px;
+    color: white;
+}
+
+#healthFill {
+    height: 20px;
+    background: #4CAF50;
+    width: 200px;
+    transition: width 0.3s;
+}
+
+#nameDisplay {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    color: white;
+    font-size: 18px;
+}
+
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 24px;
+    color: white;
+    pointer-events: none;
+}
+
+#gameOver {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.8);
+    color: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+}
+
+.hidden { display: none !important; }
