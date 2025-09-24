@@ -6,6 +6,13 @@ let gameStarted = false, gameOver = false;
 const numEnemies = 5;
 const velocity = new THREE.Vector3();
 const direction = new THREE.Vector3();
+let collidables = []; // Array for walls and obstacles
+const raycaster = new THREE.Raycaster();
+const gridSize = 50; // For A* grid (0 to 49)
+const gridOffset = 25; // Positions from -25 to 25
+const cellSize = 1;
+let blockedCells = new Set(); // For A* obstacles
+let lastPathTime = 0; // For recomputing paths
 
 // Name input
 document.getElementById('startGame').addEventListener('click', () => {
@@ -47,7 +54,7 @@ function initGame() {
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Walls (simple arena)
+    // Walls (outer arena)
     const wallGeometry = new THREE.BoxGeometry(50, 5, 1);
     const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
     const walls = [
@@ -64,7 +71,24 @@ function initGame() {
         wall.castShadow = true;
         wall.receiveShadow = true;
         scene.add(wall);
+        collidables.push(wall);
     });
+
+    // Inner obstacles (pillars for pathfinding demo)
+    const pillarGeometry = new THREE.BoxGeometry(2, 5, 2);
+    const pillar1 = new THREE.Mesh(pillarGeometry, wallMaterial);
+    pillar1.position.set(10, 2.5, 0);
+    const pillar2 = new THREE.Mesh(pillarGeometry, wallMaterial);
+    pillar2.position.set(-10, 2.5, 10);
+    [pillar1, pillar2].forEach(pillar => {
+        pillar.castShadow = true;
+        pillar.receiveShadow = true;
+        scene.add(pillar);
+        collidables.push(pillar);
+    });
+
+    // Mark blocked cells for A*
+    initBlockedCells();
 
     // Player (invisible, camera is player)
     player = camera; // For simplicity
@@ -76,7 +100,7 @@ function initGame() {
         const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
         enemy.position.set((Math.random() - 0.5) * 40, 1, (Math.random() - 0.5) * 40);
         enemy.castShadow = true;
-        enemy.userData = { health: 50, ai: { direction: new THREE.Vector3() } };
+        enemy.userData = { health: 50, path: [], currentPathIndex: 0, lastPathTime: 0 };
         scene.add(enemy);
         enemies.push(enemy);
     }
@@ -93,7 +117,100 @@ function initGame() {
     animate();
 }
 
-// Input handlers
+// Initialize blocked cells for A* (outer walls and pillars)
+function initBlockedCells() {
+    // Outer walls: block grid borders
+    for (let x = 0; x < gridSize; x++) {
+        blockedCells.add(`${x},0`); // South
+        blockedCells.add(`${x},${gridSize-1}`); // North
+    }
+    for (let z = 0; z < gridSize; z++) {
+        blockedCells.add(`0,${z}`); // West
+        blockedCells.add(`${gridSize-1},${z}`); // East
+    }
+    // Pillar1 at (10,0) -> grid (35,25) approx (x+25, z+25)
+    for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+            blockedCells.add(`${Math.floor(10 + gridOffset + dx)},${Math.floor(0 + gridOffset + dz)}`);
+            blockedCells.add(`${Math.floor(-10 + gridOffset + dx)},${Math.floor(10 + gridOffset + dz)}`);
+        }
+    }
+}
+
+// Position to grid coord
+function posToGrid(pos) {
+    return {
+        x: Math.floor(pos.x + gridOffset),
+        z: Math.floor(pos.z + gridOffset)
+    };
+}
+
+// Grid to position
+function gridToPos(gx, gz) {
+    return new THREE.Vector3(gx - gridOffset + 0.5, 1, gz - gridOffset + 0.5); // Center of cell
+}
+
+// A* pathfinding
+function findPath(start, goal) {
+    const openSet = [];
+    const cameFrom = new Map();
+    const gScore = new Map();
+    const fScore = new Map();
+
+    const startKey = `${start.x},${start.z}`;
+    openSet.push(start);
+    gScore.set(startKey, 0);
+    fScore.set(startKey, heuristic(start, goal));
+
+    while (openSet.length > 0) {
+        openSet.sort((a, b) => fScore.get(`${a.x},${a.z}`) - fScore.get(`${b.x},${b.z}`));
+        const current = openSet.shift();
+        const currentKey = `${current.x},${current.z}`;
+
+        if (current.x === goal.x && current.z === goal.z) {
+            return reconstructPath(cameFrom, current);
+        }
+
+        const neighbors = getNeighbors(current);
+        for (const neighbor of neighbors) {
+            const neighborKey = `${neighbor.x},${neighbor.z}`;
+            const tentativeG = gScore.get(currentKey) + 1; // Distance 1 per cell
+
+            if (tentativeG < (gScore.get(neighborKey) || Infinity)) {
+                cameFrom.set(neighborKey, current);
+                gScore.set(neighborKey, tentativeG);
+                fScore.set(neighborKey, tentativeG + heuristic(neighbor, goal));
+                if (!openSet.some(n => n.x === neighbor.x && n.z === neighbor.z)) {
+                    openSet.push(neighbor);
+                }
+            }
+        }
+    }
+    return []; // No path
+}
+
+function heuristic(a, b) {
+    return Math.abs(a.x - b.x) + Math.abs(a.z - b.z); // Manhattan
+}
+
+function getNeighbors(node) {
+    const dirs = [{x:1,z:0}, {x:-1,z:0}, {x:0,z:1}, {x:0,z:-1}]; // 4-way
+    return dirs.map(d => ({x: node.x + d.x, z: node.z + d.z}))
+               .filter(n => n.x >= 0 && n.x < gridSize && n.z >= 0 && n.z < gridSize && !blockedCells.has(`${n.x},${n.z}`));
+}
+
+function reconstructPath(cameFrom, current) {
+    const path = [current];
+    let currentKey = `${current.x},${current.z}`;
+    while (cameFrom.has(currentKey)) {
+        current = cameFrom.get(currentKey);
+        currentKey = `${current.x},${current.z}`;
+        path.unshift(current);
+    }
+    return path;
+}
+
+// Input handlers (unchanged)
 function onKeyDown(event) {
     keys[event.code] = true;
 }
@@ -117,7 +234,7 @@ function onMouseClick() {
     if (!gameOver) shoot();
 }
 
-// Shooting (player)
+// Shooting (player) - unchanged
 function shoot() {
     const bulletGeometry = new THREE.SphereGeometry(0.1);
     const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
@@ -128,8 +245,9 @@ function shoot() {
     projectiles.push(bullet);
 }
 
-// Enemy AI: Move towards player, shoot occasionally
+// Update enemies with pathfinding
 function updateEnemies() {
+    const now = performance.now();
     enemies.forEach((enemy, index) => {
         if (enemy.userData.health <= 0) {
             scene.remove(enemy);
@@ -137,12 +255,32 @@ function updateEnemies() {
             return;
         }
 
-        // Simple chase AI
-        const dir = new THREE.Vector3().subVectors(camera.position, enemy.position).normalize();
-        enemy.userData.ai.direction.copy(dir);
-        enemy.position.add(dir.multiplyScalar(0.02)); // Slow chase
+        // Recompute path every 1 second or if no path
+        if (now - enemy.userData.lastPathTime > 1000 || enemy.userData.path.length === 0) {
+            const startGrid = posToGrid(enemy.position);
+            const goalGrid = posToGrid(camera.position);
+            enemy.userData.path = findPath(startGrid, goalGrid).map(p => gridToPos(p.x, p.z));
+            enemy.userData.currentPathIndex = 0;
+            enemy.userData.lastPathTime = now;
+        }
 
-        // Randomly shoot bullet or bomb
+        // Follow path
+        if (enemy.userData.path.length > 0 && enemy.userData.currentPathIndex < enemy.userData.path.length) {
+            const target = enemy.userData.path[enemy.userData.currentPathIndex];
+            const dir = new THREE.Vector3().subVectors(target, enemy.position).normalize();
+            const move = dir.clone().multiplyScalar(0.02);
+
+            // Check collision before moving
+            if (!checkCollision(enemy.position, move, 0.5)) { // 0.5 radius
+                enemy.position.add(move);
+            }
+
+            if (enemy.position.distanceTo(target) < 0.1) {
+                enemy.userData.currentPathIndex++;
+            }
+        }
+
+        // Randomly shoot
         if (Math.random() < 0.01) shootEnemy(enemy, true); // Bullet
         if (Math.random() < 0.005) shootEnemy(enemy, false); // Bomb
     });
@@ -150,7 +288,25 @@ function updateEnemies() {
     if (enemies.length === 0) winLevel();
 }
 
-// Enemy shoot
+// Collision check using raycasting
+function checkCollision(position, direction, radius) {
+    const dirs = [direction.normalize()]; // Main direction
+    // Add side rays for better detection
+    const right = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0,1,0)).normalize().multiplyScalar(radius);
+    dirs.push(direction.clone().add(right).normalize());
+    dirs.push(direction.clone().sub(right).normalize());
+
+    for (const dir of dirs) {
+        raycaster.set(position, dir);
+        const intersects = raycaster.intersectObjects(collidables);
+        if (intersects.length > 0 && intersects[0].distance < radius + 0.1) {
+            return true; // Collision
+        }
+    }
+    return false;
+}
+
+// Enemy shoot - unchanged
 function shootEnemy(enemy, isBullet) {
     const projGeometry = isBullet ? new THREE.SphereGeometry(0.05) : new THREE.SphereGeometry(0.2);
     const projMaterial = new THREE.MeshBasicMaterial({ color: isBullet ? 0xff0000 : 0x000000 });
@@ -162,20 +318,28 @@ function shootEnemy(enemy, isBullet) {
     (isBullet ? projectiles : bombs).push(proj);
 }
 
-// Update projectiles and bombs
+// Update projectiles and bombs - unchanged, but add collision with walls for projectiles?
+// For simplicity, let them pass or remove on hit, but skipped for now
+
 function updateProjectiles() {
     // Player bullets
     projectiles = projectiles.filter(proj => {
         if (proj.userData.isPlayer) {
             proj.position.add(proj.userData.velocity);
             // Check enemy hits
-            enemies.forEach((enemy, index) => {
+            enemies.forEach(enemy => {
                 if (proj.position.distanceTo(enemy.position) < 1) {
                     enemy.userData.health -= 25;
                     scene.remove(proj);
                     return false;
                 }
             });
+            // Check wall hits (remove bullet)
+            raycaster.set(proj.position, proj.userData.velocity.normalize());
+            if (raycaster.intersectObjects(collidables).length > 0) {
+                scene.remove(proj);
+                return false;
+            }
             if (proj.position.length() > 100) {
                 scene.remove(proj);
                 return false;
@@ -185,32 +349,27 @@ function updateProjectiles() {
     });
 
     // Enemy projectiles/bombs
-    [...projectiles, ...bombs].forEach((proj, index) => {
-        if (proj.userData.isBomb) {
-            // Bomb logic: explode on player hit
-            proj.position.add(proj.userData.velocity);
-            if (proj.position.distanceTo(camera.position) < 1.5) {
-                health -= proj.userData.damage;
-                explode(proj.position, proj.userData.explosionRadius);
-                scene.remove(proj);
-                return;
-            }
-        } else {
-            proj.position.add(proj.userData.velocity);
-            if (proj.position.distanceTo(camera.position) < 1) {
-                health -= proj.userData.damage;
-                scene.remove(proj);
-                return;
-            }
+    [...projectiles, ...bombs].forEach(proj => {
+        proj.position.add(proj.userData.velocity);
+        // Check player hit
+        if (proj.position.distanceTo(camera.position) < (proj.userData.isBomb ? 1.5 : 1)) {
+            health -= proj.userData.damage;
+            if (proj.userData.isBomb) explode(proj.position, proj.userData.explosionRadius);
+            scene.remove(proj);
+            return;
         }
-        if (proj.position.length() > 100) scene.remove(proj);
+        // Check wall hits
+        raycaster.set(proj.position, proj.userData.velocity.normalize());
+        if (raycaster.intersectObjects(collidables).length > 0) {
+            scene.remove(proj);
+        }
     });
 
     updateHealth();
     if (health <= 0) gameOverScreen('You got bombed! Game Over.');
 }
 
-// Explosion effect (simple particle)
+// Explosion effect - unchanged
 function explode(pos, radius) {
     for (let i = 0; i < 10; i++) {
         const particle = new THREE.Mesh(new THREE.SphereGeometry(0.05), new THREE.MeshBasicMaterial({ color: 0xff4500 }));
@@ -221,23 +380,34 @@ function explode(pos, radius) {
     }
 }
 
-// Movement
+// Movement with collision
 function updateMovement() {
-    velocity.set(0, 0, 0);
+    velocity.set(0, velocity.y, 0); // Reset x/z, keep y for jump/gravity
 
-    if (keys['KeyW'] || keys['ArrowUp']) velocity.z -= 0.1;
-    if (keys['KeyS'] || keys['ArrowDown']) velocity.z += 0.1;
-    if (keys['KeyA'] || keys['ArrowLeft']) velocity.x -= 0.1;
-    if (keys['KeyD'] || keys['ArrowRight']) velocity.x += 0.1;
-    if (keys['Space']) velocity.y += 0.2; // Jump (simple, no gravity for brevity)
+    direction.set(0, 0, 0);
+    if (keys['KeyW'] || keys['ArrowUp']) direction.z -= 1;
+    if (keys['KeyS'] || keys['ArrowDown']) direction.z += 1;
+    if (keys['KeyA'] || keys['ArrowLeft']) direction.x -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) direction.x += 1;
 
-    velocity.applyQuaternion(camera.quaternion);
-    velocity.y -= 0.01; // Basic gravity
-    camera.position.add(velocity);
+    direction.normalize();
+    velocity.add(direction.multiplyScalar(0.1)); // Speed
+
+    if (keys['Space']) velocity.y += 0.2; // Jump
+    velocity.y -= 0.01; // Gravity
+
+    // Check collision for x/z movement
+    const moveXZ = new THREE.Vector3(velocity.x, 0, velocity.z);
+    if (!checkCollision(camera.position, moveXZ, 0.5)) {
+        camera.position.add(moveXZ);
+    }
+
+    // Y movement (no floor collision beyond clamp)
+    camera.position.y += velocity.y;
     camera.position.y = Math.max(1.6, camera.position.y); // Ground clamp
 }
 
-// UI Updates
+// UI Updates - unchanged
 function updateHealth() {
     const fill = document.getElementById('healthFill');
     fill.style.width = (health / maxHealth * 200) + 'px';
