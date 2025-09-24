@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bomb Squad Arena</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="three.min.js"></script>
+</head>
+<body>
+    <div id="nameScreen">
+        <h1>Bomb Squad Arena</h1>
+        <p>Enter your name to join the fight:</p>
+        <input type="text" id="playerName" placeholder="Your Name" maxlength="20">
+        <button id="startGame">Start Game</button>
+    </div>
+
+    <div id="ui">
+        <div id="healthBar">Health: <div id="healthFill"></div></div>
+        <div id="nameDisplay"></div>
+        <div id="crosshair">+</div>
+    </div>
+
+    <div id="gameOver" class="hidden">
+        <h2 id="gameMessage"></h2>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
